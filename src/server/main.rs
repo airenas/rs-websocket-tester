@@ -13,7 +13,7 @@ use wslib::shutdown_signal;
 #[command(version = env!("CARGO_APP_VERSION"), name = "asr-worker", about, long_about = None)]
 struct Args {
     /// Port
-    #[arg(long, env)]
+    #[arg(long, env, default_value = "8000")]
     port: String,
 }
 
@@ -38,6 +38,9 @@ async fn main_int(args: Args) -> anyhow::Result<()> {
         loop {
             tokio::select! {
                 Ok((stream, _)) = listener.accept() => {
+                    if let Ok(peer_addr) = stream.peer_addr() {
+                        log::info!("Incoming connection from: {}", peer_addr);
+                    }
                     let token = cl_token.clone();
                     tokio::spawn(handle_connection(stream, token));
                 }
