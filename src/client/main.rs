@@ -3,11 +3,7 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 use futures::{SinkExt, StreamExt};
 use tokio::{net::TcpStream, time};
-use tokio_tungstenite::{
-    connect_async,
-    tungstenite::{Message},
-    MaybeTlsStream, WebSocketStream,
-};
+use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -30,6 +26,17 @@ async fn main_int(args: Args) -> anyhow::Result<()> {
 
     let url = Url::parse(&args.url)?;
     let token = CancellationToken::new();
+
+    let cl_token = token.clone();
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = shutdown_signal() => {
+                cl_token.cancel();
+            }
+            _ = cl_token.cancelled() => {}
+        }
+    });
+
     let ws_stream = connect(url, token.clone())
         .await
         .context("Failed to connect")?;
@@ -90,13 +97,6 @@ async fn main_int(args: Args) -> anyhow::Result<()> {
         }
     });
 
-    tokio::select! {
-        _ = shutdown_signal() => {
-            token.cancel();
-        }
-        _ = token.cancelled() => {}
-    }
-
     if let Err(e) = read_task.await {
         log::error!("Client read encountered an error: {:?}", e);
     }
@@ -143,6 +143,7 @@ async fn connect(
                 if token.is_cancelled() {
                     return Err(e);
                 }
+                tokio::time::sleep(Duration::from_secs(1)).await;
             }
         }
     }
