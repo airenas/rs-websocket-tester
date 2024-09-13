@@ -2,8 +2,12 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use futures::{SinkExt, StreamExt};
-use tokio::time;
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio::{net::TcpStream, time};
+use tokio_tungstenite::{
+    connect_async,
+    tungstenite::{Message},
+    MaybeTlsStream, WebSocketStream,
+};
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -25,11 +29,12 @@ async fn main_int(args: Args) -> anyhow::Result<()> {
     log::info!("URL          : {}", args.url);
 
     let url = Url::parse(&args.url)?;
-    let (ws_stream, _) = connect_async(url).await.context("Failed to connect")?;
+    let token = CancellationToken::new();
+    let ws_stream = connect(url, token.clone())
+        .await
+        .context("Failed to connect")?;
     log::info!("WebSocket connection established");
     let (mut write, mut read) = ws_stream.split();
-
-    let token = CancellationToken::new();
 
     let mut interval = time::interval(Duration::from_millis(200));
     let mut message_id = 0;
@@ -101,6 +106,46 @@ async fn main_int(args: Args) -> anyhow::Result<()> {
 
     log::info!("Done");
     Ok(())
+}
+
+async fn connect(
+    url: Url,
+    token: CancellationToken,
+) -> anyhow::Result<WebSocketStream<MaybeTlsStream<TcpStream>>> {
+    let timeout_duration = Duration::from_secs(3);
+    loop {
+        log::info!("Connecting to WebSocket: {}", url);
+        let res = tokio::select! {
+            ws_stream_result = time::timeout(timeout_duration, connect_async(&url)) => {
+                match ws_stream_result {
+                    Ok(Ok((ws_stream, _))) => {
+                        log::info!("Successfully connected to WebSocket! {}", url);
+                        Ok(ws_stream)
+                    }
+                    Ok(Err(e)) => {
+                        Err(anyhow::anyhow!("Failed to establish WebSocket connection: {}", e))
+                    }
+                    Err(_) => {
+                        Err(anyhow::anyhow!("WebSocket connection timed out after {} seconds", timeout_duration.as_secs()))
+                    }
+                }
+            }
+            _ = token.cancelled() => {
+                Err(anyhow::anyhow!("cancelled"))
+            }
+        };
+        match res {
+            Ok(ws_stream) => {
+                return Ok(ws_stream);
+            }
+            Err(e) => {
+                log::error!("{}", e);
+                if token.is_cancelled() {
+                    return Err(e);
+                }
+            }
+        }
+    }
 }
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]

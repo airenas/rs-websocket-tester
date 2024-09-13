@@ -1,8 +1,9 @@
 -include Makefile.options
 log?=INFO
+url?=ws://localhost:8002
 ###############################################################################
 run/client:
-	RUST_LOG=$(log) cargo run --bin rs-ws-client -- --url ws://localhost:8002
+	RUST_LOG=$(log) cargo run --bin rs-ws-client -- --url $(url)
 .PHONY: run/worker
 ###############################################################################
 run/server:
