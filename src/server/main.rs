@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use futures::{SinkExt, StreamExt};
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, time};
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -21,13 +21,31 @@ async fn main_int(args: Args) -> anyhow::Result<()> {
     log::info!("Starting websocket server");
     log::info!("Version      : {}", env!("CARGO_APP_VERSION"));
     log::info!("Port         : {}", args.port);
-    if let Some(ip) = public_ip::addr().await {
-        log::info!("Public IP    : {}", ip);
-    } else {
-        log::warn!("Public IP    : unknown");
-    }
 
     let token = CancellationToken::new();
+    let cl_token = token.clone();
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = shutdown_signal() => {
+                cl_token.cancel();
+            }
+            _ = cl_token.cancelled() => {}
+        }
+    });
+
+    tokio::select! {
+        ip = public_ip::addr() => {
+            if let Some(ip) = ip {
+                log::info!("Public IP    : {}", ip);
+            } else {
+                log::warn!("Public IP    : unknown");
+            }
+        }
+        _ = time::sleep(time::Duration::from_secs(5)) =>{
+            log::warn!("Public IP    : timeout");
+        },
+        _ = token.cancelled() => {}
+    }
 
     let addr = format!("0.0.0.0:{}", args.port);
     let listener = TcpListener::bind(&addr).await?;
@@ -52,8 +70,6 @@ async fn main_int(args: Args) -> anyhow::Result<()> {
         }
     });
 
-    shutdown_signal().await;
-    token.cancel();
     if let Err(e) = server_task.await {
         log::error!("Server task encountered an error: {:?}", e);
     }
